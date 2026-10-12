@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
+import type { PoolConnection, RowDataPacket } from "mysql2/promise";
+import { pool } from "./db";
 import { CATEGORIES, type Category, type EventRecord, type Store } from "./types";
-
-const storePath = path.join(process.cwd(), "data", "store.json");
 
 function dateIn(days: number, hour: number) {
   const date = new Date();
@@ -37,34 +35,185 @@ async function createSeed(): Promise<Store> {
   };
 }
 
+type EventRow = RowDataPacket & {
+  id: string;
+  title: string;
+  category: Category;
+  city: string;
+  date: string;
+  price: number;
+  description: string;
+  imageUrl: string;
+  active: number;
+};
+
+type UserRow = RowDataPacket & { id: string; email: string; passwordHash: string };
+type FavoriteRow = RowDataPacket & { userId: string; category: Category };
+type ReminderRow = RowDataPacket & { userId: string; eventId: string };
+type DesignRow = RowDataPacket & { userId: string; eventId: string; theme: string; stickers: string[] | string };
+
+async function readStoreWith(connection: PoolConnection): Promise<Store> {
+  const [events] = await connection.query<EventRow[]>(
+    `SELECT id, title, category, city,
+            DATE_FORMAT(event_date, '%Y-%m-%dT%H:%i:%s.000Z') AS date,
+            price, description, image_url AS imageUrl, active
+     FROM events`
+  );
+  const [users] = await connection.query<UserRow[]>(
+    "SELECT id, email, password_hash AS passwordHash FROM users"
+  );
+  const [favorites] = await connection.query<FavoriteRow[]>(
+    "SELECT user_id AS userId, category FROM user_favorites"
+  );
+  const [reminders] = await connection.query<ReminderRow[]>(
+    "SELECT user_id AS userId, event_id AS eventId FROM user_reminders"
+  );
+  const [designs] = await connection.query<DesignRow[]>(
+    "SELECT user_id AS userId, event_id AS eventId, theme, stickers FROM user_event_designs"
+  );
+
+  return {
+    events: events.map((event) => ({
+      ...event,
+      price: Number(event.price),
+      active: Boolean(event.active)
+    })),
+    users: users.map((user) => {
+      const userDesigns: Record<string, { theme: string; stickers: string[] }> = {};
+      for (const design of designs) {
+        if (design.userId === user.id) {
+          userDesigns[design.eventId] = {
+            theme: design.theme,
+            stickers: typeof design.stickers === "string" ? JSON.parse(design.stickers) as string[] : design.stickers
+          };
+        }
+      }
+      return {
+        ...user,
+        favorites: favorites.filter((favorite) => favorite.userId === user.id).map((favorite) => favorite.category),
+        reminders: reminders.filter((reminder) => reminder.userId === user.id).map((reminder) => reminder.eventId),
+        designs: userDesigns
+      };
+    })
+  };
+}
+
 export async function readStore(): Promise<Store> {
+  await seedIfEmpty();
+  const connection = await pool.getConnection();
   try {
-    return JSON.parse(await readFile(storePath, "utf8")) as Store;
+    await connection.beginTransaction();
+    const store = await readStoreWith(connection);
+    await connection.commit();
+    return store;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    const initial = await createSeed();
-    await writeStore(initial);
-    return initial;
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
   }
 }
 
-export async function writeStore(store: Store) {
-  await mkdir(path.dirname(storePath), { recursive: true });
-  const temporary = `${storePath}.${randomUUID()}.tmp`;
-  await writeFile(temporary, JSON.stringify(store, null, 2), "utf8");
-  await rename(temporary, storePath);
+let seedPromise: Promise<void> | undefined;
+
+function seedIfEmpty(): Promise<void> {
+  if (!seedPromise) {
+    seedPromise = (async () => {
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        await connection.query("SELECT id FROM store_write_lock WHERE id = 1 FOR UPDATE");
+        const [rows] = await connection.query<Array<RowDataPacket & { count: number }>>(
+          "SELECT COUNT(*) AS count FROM events"
+        );
+        if (Number(rows[0].count) === 0) {
+          const seed = await createSeed();
+          for (const event of seed.events) await saveEvent(connection, event);
+        }
+        await connection.commit();
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
+    })().catch((error: unknown) => {
+      seedPromise = undefined;
+      throw error;
+    });
+  }
+  return seedPromise;
 }
 
-let pendingWrite = Promise.resolve();
-export function updateStore<T>(update: (store: Store) => T | Promise<T>): Promise<T> {
-  const operation = pendingWrite.then(async () => {
-    const store = await readStore();
-    const result = await update(store);
-    await writeStore(store);
+async function saveEvent(connection: PoolConnection, event: EventRecord) {
+  await connection.execute(
+    `INSERT INTO events (id, title, category, city, event_date, price, description, image_url, active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE title = VALUES(title), category = VALUES(category), city = VALUES(city),
+       event_date = VALUES(event_date), price = VALUES(price), description = VALUES(description),
+       image_url = VALUES(image_url), active = VALUES(active)`,
+    [event.id, event.title, event.category, event.city, event.date.slice(0, 19).replace("T", " "), event.price, event.description, event.imageUrl, event.active]
+  );
+}
+
+async function saveUser(connection: PoolConnection, user: Store["users"][number]) {
+  await connection.execute(
+    `INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE email = VALUES(email), password_hash = VALUES(password_hash)`,
+    [user.id, user.email, user.passwordHash]
+  );
+  await connection.execute("DELETE FROM user_favorites WHERE user_id = ?", [user.id]);
+  await connection.execute("DELETE FROM user_reminders WHERE user_id = ?", [user.id]);
+  await connection.execute("DELETE FROM user_event_designs WHERE user_id = ?", [user.id]);
+
+  for (const category of user.favorites) {
+    await connection.execute("INSERT INTO user_favorites (user_id, category) VALUES (?, ?)", [user.id, category]);
+  }
+  for (const eventId of user.reminders) {
+    await connection.execute("INSERT INTO user_reminders (user_id, event_id) VALUES (?, ?)", [user.id, eventId]);
+  }
+  for (const [eventId, design] of Object.entries(user.designs)) {
+    await connection.execute(
+      "INSERT INTO user_event_designs (user_id, event_id, theme, stickers) VALUES (?, ?, ?, ?)",
+      [user.id, eventId, design.theme, JSON.stringify(design.stickers)]
+    );
+  }
+}
+
+export async function updateStore<T>(update: (store: Store) => T | Promise<T>): Promise<T> {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await connection.query("SELECT id FROM store_write_lock WHERE id = 1 FOR UPDATE");
+    const before = await readStoreWith(connection);
+    const after = structuredClone(before);
+    const result = await update(after);
+    const oldUsers = new Map(before.users.map((user) => [user.id, user]));
+    const newUsers = new Map(after.users.map((user) => [user.id, user]));
+    const oldEvents = new Map(before.events.map((event) => [event.id, event]));
+    const newEvents = new Map(after.events.map((event) => [event.id, event]));
+
+    for (const id of oldUsers.keys()) {
+      if (!newUsers.has(id)) await connection.execute("DELETE FROM users WHERE id = ?", [id]);
+    }
+    for (const id of oldEvents.keys()) {
+      if (!newEvents.has(id)) await connection.execute("DELETE FROM events WHERE id = ?", [id]);
+    }
+    for (const [id, event] of newEvents) {
+      if (JSON.stringify(oldEvents.get(id)) !== JSON.stringify(event)) await saveEvent(connection, event);
+    }
+    for (const [id, user] of newUsers) {
+      if (JSON.stringify(oldUsers.get(id)) !== JSON.stringify(user)) await saveUser(connection, user);
+    }
+
+    await connection.commit();
     return result;
-  });
-  pendingWrite = operation.then(() => undefined, () => undefined);
-  return operation;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 export function isCategory(value: string): value is Category {

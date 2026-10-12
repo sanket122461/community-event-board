@@ -6,14 +6,56 @@ A responsive Next.js App Router app with public event browsing, visitor accounts
 
 1. Install Node.js 20 or newer.
 2. Run `npm install`.
-3. Copy `.env.example` to `.env.local` and set a unique `JWT_SECRET`. Change the example admin password before sharing or deploying the app.
-4. Run `npm run dev` and visit `http://localhost:3000`.
+3. Start MySQL in XAMPP and import `database/migrations/001_initial_schema.sql` using phpMyAdmin or the MySQL command line.
+4. Copy `.env.example` to `.env.local`; set a unique `JWT_SECRET` and your MySQL connection settings. For a default local XAMPP install, the included database settings use `root` with a blank password.
+5. Run `npm run dev` and visit `http://localhost:3000`.
 
-The default local admin credentials are `admin@communityboard.in` / `community123`. Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env.local` to change them. Production requires all three environment variables: `JWT_SECRET`, `ADMIN_EMAIL` and `ADMIN_PASSWORD`.
+Open `/admin/login` (also linked in the site navigation) to sign in as the organizer. The local development demo credentials are `admin@communityboard.in` / `community123`; set `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env.local` to change them. Production requires all three environment variables: `JWT_SECRET`, `ADMIN_EMAIL` and `ADMIN_PASSWORD`.
 
-## Persistence
+Only an authenticated admin can open `/admin`, create events, or change an event's Active/Inactive status. Visitors can browse and interact with active events, but cannot create events or change their status. Events are never deleted from the admin dashboard.
 
-The app seeds 15 example events on first run and stores changes and visitor accounts in `data/store.json`. This lightweight file-backed store suits a single Node.js server; it is not intended for multi-instance/serverless hosting. Keep `data/store.json` backed up if you need to preserve local event and account data.
+## MySQL persistence
+
+The app uses MySQL via the `mysql2` driver. Apply `database/migrations/001_initial_schema.sql` once to create the `community_event_board` database, tables, indexes, and the write-lock row required by transactional updates. On first database access, the app inserts its 15 example events if the `events` table is empty. Existing data in the old `data/store.json` file is not imported automatically.
+
+Set `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` in `.env.local`. Never expose database credentials in client-side code or commit `.env.local`.
+
+The API storage layer maps the current routes to these tables:
+
+| API behavior | MySQL tables and operations |
+| --- | --- |
+| Public events, event detail, admin event list/create/status update | `events` (`SELECT`, `INSERT ... ON DUPLICATE KEY UPDATE`) |
+| Signup and login | `users` (`INSERT`, `SELECT`) |
+| Favorites and personalized feed | `user_favorites` joined in memory with `users` and `events` |
+| Reminders | `user_reminders` associated with `users` and `events` |
+| Saved card themes and stickers | `user_event_designs` |
+
+All writes run in a MySQL transaction and take a row lock in `store_write_lock` so simultaneous changes to the same store are serialized across app instances.
+
+Useful direct queries:
+
+```sql
+-- Upcoming active events
+SELECT id, title, category, city, event_date, price, description, image_url
+FROM events
+WHERE active = TRUE AND event_date >= UTC_TIMESTAMP()
+ORDER BY event_date;
+
+-- One user's saved categories
+SELECT category FROM user_favorites WHERE user_id = ?;
+
+-- One user's reminders with event details
+SELECT e.*
+FROM user_reminders AS r
+JOIN events AS e ON e.id = r.event_id
+WHERE r.user_id = ?
+ORDER BY e.event_date;
+
+-- A user's saved card design for an event
+SELECT theme, stickers
+FROM user_event_designs
+WHERE user_id = ? AND event_id = ?;
+```
 
 ## JSON API
 

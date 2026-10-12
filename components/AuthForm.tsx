@@ -4,7 +4,13 @@ import Link from "next/link";
 import { ArrowLeft, ArrowRight, Sparkles } from "lucide-react";
 import { useState } from "react";
 
-export default function AuthForm({ mode }: { mode: "login" | "signup" | "admin" }) {
+export default function AuthForm({
+  mode,
+  showLocalCredentials = false
+}: {
+  mode: "login" | "signup" | "admin";
+  showLocalCredentials?: boolean;
+}) {
   const isSignup = mode === "signup";
   const isAdmin = mode === "admin";
   const [email, setEmail] = useState("");
@@ -46,6 +52,12 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" | "admin" 
           <span className="eyebrow">{isAdmin ? "FOR THE COMMUNITY ORGANISERS" : isSignup ? "COME ON IN" : "GOOD TO SEE YOU AGAIN"}</span>
           <h1>{isAdmin ? "Admin sign in" : isSignup ? "Make yourself at home." : "Welcome back."}</h1>
           <p className="auth-subtitle">{isAdmin ? "Sign in to keep your community calendar lovely." : isSignup ? "Join your neighbours and find something wonderful." : "Your next lovely local plan is just around the corner."}</p>
+          {isAdmin && showLocalCredentials && (
+            <p className="admin-demo-note">
+              Local demo login: <strong>admin@communityboard.in</strong> / <strong>community123</strong>.
+              Set <code>ADMIN_EMAIL</code> and <code>ADMIN_PASSWORD</code> in <code>.env.local</code> to change it.
+            </p>
+          )}
           <form onSubmit={submit} className="auth-form">
             <label>Email address<input type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
             <label>Password<input type="password" autoComplete={isSignup ? "new-password" : "current-password"} placeholder={isSignup ? "At least 8 characters" : "Your password"} value={password} onChange={(event) => setPassword(event.target.value)} minLength={isSignup ? 8 : undefined} required /></label>

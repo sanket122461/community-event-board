@@ -35,6 +35,7 @@ export default function SiteHeader() {
           <Link href="/" onClick={() => setOpen(false)}><CalendarDays size={16} /> Explore events</Link>
           {account?.role === "user" && <Link href="/feed" onClick={() => setOpen(false)}>My feed</Link>}
           {account?.role === "admin" && <Link href="/admin" onClick={() => setOpen(false)}>Manage events</Link>}
+          {account?.role !== "admin" && <Link href="/admin/login" onClick={() => setOpen(false)}>Admin sign in</Link>}
           {!ready ? <span className="nav-skeleton" /> : account ? (
             <div className="account-nav">
               <span className="avatar"><UserRound size={15} /></span>

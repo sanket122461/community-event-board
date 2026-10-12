@@ -150,6 +150,7 @@ button { color: inherit; }
 .back-link { display: inline-flex; align-items: center; gap: 8px; color: #728077; font-size: 11px; font-weight: 600; }.back-link:hover { color: var(--green); }
 .auth-form-wrap { width: min(100%, 390px); margin: 40px auto; }.auth-mobile-mark { display: none; }.auth-form-wrap > .eyebrow { color: var(--green); }
 .auth-form-wrap h1 { margin: 15px 0 8px; font-family: var(--serif); font-size: 39px; line-height: 1.15; font-weight: 500; letter-spacing: -.7px; }.auth-subtitle { margin: 0; color: #879087; font-size: 12px; line-height: 1.7; }
+.admin-demo-note { margin: 16px 0 0; padding: 11px 12px; border: 1px solid #e5e8dc; border-radius: 3px; color: #667368; background: #f1f4ed; font-size: 11px; line-height: 1.6; }.admin-demo-note strong, .admin-demo-note code { color: var(--green-dark); }.admin-demo-note code { font-size: 10px; font-weight: 700; }
 .auth-form { margin-top: 27px; display: grid; gap: 17px; }.auth-form label, .admin-form label { display: grid; gap: 7px; color: #4a584e; font-size: 11px; font-weight: 700; }
 .auth-form input, .admin-form input, .admin-form textarea, .admin-form select { width: 100%; height: 44px; padding: 0 12px; border: 1px solid #e3e5dc; border-radius: 3px; outline: none; color: var(--ink); background: #fffefa; font-size: 12px; font-weight: 400; transition: border .15s, box-shadow .15s; }
 .auth-form input:focus, .admin-form input:focus, .admin-form textarea:focus, .admin-form select:focus { border-color: #98b19c; box-shadow: 0 0 0 3px rgba(61, 107, 82, .08); }
